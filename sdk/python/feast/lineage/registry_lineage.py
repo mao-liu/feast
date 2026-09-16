@@ -228,6 +228,27 @@ class RegistryLineageGenerator:
                         )
                         relationships.append(rel)
 
+                # Stream source relationship
+                if (
+                    hasattr(feature_view.spec, "stream_source")
+                    and feature_view.spec.stream_source
+                ):
+                    stream_source_name = getattr(
+                        feature_view.spec.stream_source, "name", None
+                    )
+                    if stream_source_name:
+                        relationships.append(
+                            EntityRelation(
+                                source=EntityReference(
+                                    FeastObjectType.DATA_SOURCE, stream_source_name
+                                ),
+                                target=EntityReference(
+                                    FeastObjectType.FEATURE_VIEW,
+                                    feature_view.spec.name,
+                                ),
+                            )
+                        )
+
                 # Batch source relationship
                 if (
                     hasattr(feature_view.spec, "batch_source")
@@ -454,6 +475,78 @@ class RegistryLineageGenerator:
                             ),
                         )
                     )
+
+        # Upstream FeatureView -> DataSource (PushSource) relationships
+        all_data_sources = list(registry.data_sources)
+        for fv in registry.feature_views:
+            if hasattr(fv, "spec") and fv.spec:
+                if (
+                    hasattr(fv.spec, "stream_source")
+                    and fv.spec.stream_source
+                    and fv.spec.stream_source.name
+                ):
+                    all_data_sources.append(fv.spec.stream_source)
+                if (
+                    hasattr(fv.spec, "batch_source")
+                    and fv.spec.batch_source
+                    and fv.spec.batch_source.name
+                ):
+                    all_data_sources.append(fv.spec.batch_source)
+        for sfv in registry.stream_feature_views:
+            if hasattr(sfv, "spec") and sfv.spec:
+                if (
+                    hasattr(sfv.spec, "stream_source")
+                    and sfv.spec.stream_source
+                    and sfv.spec.stream_source.name
+                ):
+                    all_data_sources.append(sfv.spec.stream_source)
+                if (
+                    hasattr(sfv.spec, "batch_source")
+                    and sfv.spec.batch_source
+                    and sfv.spec.batch_source.name
+                ):
+                    all_data_sources.append(sfv.spec.batch_source)
+        for lv in registry.label_views:
+            if hasattr(lv, "spec") and lv.spec:
+                if (
+                    hasattr(lv.spec, "source")
+                    and lv.spec.source
+                    and lv.spec.source.name
+                ):
+                    all_data_sources.append(lv.spec.source)
+                if (
+                    hasattr(lv.spec, "batch_source")
+                    and lv.spec.batch_source
+                    and lv.spec.batch_source.name
+                ):
+                    all_data_sources.append(lv.spec.batch_source)
+
+        seen_push_edges: Set[Tuple[str, str]] = set()
+        for ds in all_data_sources:
+            if not (hasattr(ds, "name") and ds.name):
+                continue
+            if (
+                hasattr(ds, "push_options")
+                and ds.push_options
+                and hasattr(ds.push_options, "upstream_feature_views")
+            ):
+                for upstream_fv in ds.push_options.upstream_feature_views:
+                    edge_key = (upstream_fv, ds.name)
+                    if edge_key not in seen_push_edges:
+                        seen_push_edges.add(edge_key)
+                        source_type = (
+                            FeastObjectType.LABEL_VIEW
+                            if upstream_fv in label_view_names
+                            else FeastObjectType.FEATURE_VIEW
+                        )
+                        relationships.append(
+                            EntityRelation(
+                                source=EntityReference(source_type, upstream_fv),
+                                target=EntityReference(
+                                    FeastObjectType.DATA_SOURCE, ds.name
+                                ),
+                            )
+                        )
 
         # SavedDataset relationships
         ds_location_index = _build_datasource_location_index(registry)

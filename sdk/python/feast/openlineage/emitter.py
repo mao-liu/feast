@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
     from feast import FeatureService, FeatureView
+    from feast.data_source import PushSource
     from feast.infra.registry.base_registry import BaseRegistry
     from feast.labeling.label_view import LabelView
     from feast.on_demand_feature_view import OnDemandFeatureView
@@ -271,6 +272,45 @@ class FeastOpenLineageEmitter:
         except Exception as e:
             logger.error(f"Error emitting saved dataset lineage: {e}")
 
+        # Emit events for push sources with upstream feature views
+        try:
+            from feast.data_source import PushSource
+
+            all_push_sources: Dict[str, PushSource] = {}
+            for ds in registered_data_sources:
+                if isinstance(ds, PushSource) and ds.name and ds.source_views:
+                    all_push_sources[ds.name] = ds
+            for fv in all_feature_views:
+                if (
+                    hasattr(fv, "stream_source")
+                    and isinstance(fv.stream_source, PushSource)
+                    and fv.stream_source.name
+                    and fv.stream_source.source_views
+                ):
+                    all_push_sources[fv.stream_source.name] = fv.stream_source
+                if (
+                    hasattr(fv, "batch_source")
+                    and isinstance(fv.batch_source, PushSource)
+                    and fv.batch_source.name
+                    and fv.batch_source.source_views
+                ):
+                    all_push_sources[fv.batch_source.name] = fv.batch_source
+                if (
+                    hasattr(fv, "source")
+                    and isinstance(fv.source, PushSource)
+                    and fv.source.name
+                    and fv.source.source_views
+                ):
+                    all_push_sources[fv.source.name] = fv.source
+
+            for ps in all_push_sources.values():
+                result = self.emit_push_source_lineage(
+                    ps, all_feature_views=all_feature_views, project=project
+                )
+                results.append(result)
+        except Exception as e:
+            logger.error(f"Error emitting push source lineage: {e}")
+
         logger.info(
             f"Emitted {sum(results)}/{len(results)} lineage events for registry"
         )
@@ -502,6 +542,90 @@ class FeastOpenLineageEmitter:
         except Exception as e:
             logger.error(
                 f"Error emitting on-demand feature view lineage for {odfv.name}: {e}"
+            )
+            return False
+
+    def emit_push_source_lineage(
+        self,
+        push_source: "PushSource",
+        all_feature_views: Optional[List[Any]] = None,
+        project: str = "",
+    ) -> bool:
+        """
+        Emit OpenLineage job definition event for a PushSource with upstream feature views.
+
+        Job: push_source_{push_source.name}
+        Inputs: Upstream FeatureViews (push_source.source_views)
+        Outputs: PushSource dataset
+
+        Args:
+            push_source: PushSource object
+            all_feature_views: List of all available feature views for schema metadata
+            project: Project name
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.is_enabled or not push_source.source_views:
+            return False
+
+        from feast.openlineage.facets import FeastProjectFacet
+        from feast.openlineage.identity import FeastJobKind, push_source_job_name
+        from feast.openlineage.mappers import (
+            data_source_to_dataset,
+            feast_field_to_schema_field,
+        )
+
+        try:
+            from openlineage.client.facet_v2 import schema_dataset
+
+            namespace = self._get_namespace(project)
+
+            ps_inputs = []
+            for sv_name in push_source.source_views:
+                input_facets: Dict[str, Any] = {}
+                if all_feature_views:
+                    for fv in all_feature_views:
+                        if getattr(fv, "name", None) == sv_name and getattr(
+                            fv, "features", None
+                        ):
+                            input_facets["schema"] = schema_dataset.SchemaDatasetFacet(
+                                fields=[
+                                    feast_field_to_schema_field(f) for f in fv.features
+                                ]
+                            )
+                            break
+                ps_inputs.append(
+                    InputDataset(
+                        namespace=namespace,
+                        name=sv_name,
+                        facets=input_facets,
+                    )
+                )
+
+            ps_output = data_source_to_dataset(
+                push_source, namespace=namespace, as_input=False
+            )
+
+            job_facets = {
+                "feast_project": FeastProjectFacet(
+                    project_name=project,
+                ),
+                **self._job_kind_facets(FeastJobKind.DEFINITION, project),
+            }
+
+            return self._client.emit_run_event(
+                job_name=push_source_job_name(push_source.name),
+                run_id=str(uuid.uuid4()),
+                event_type=RunState.COMPLETE,
+                inputs=ps_inputs,
+                outputs=[ps_output],
+                job_facets=job_facets,
+                namespace=namespace,
+            )
+        except Exception as e:
+            logger.error(
+                f"Error emitting lineage for push source {push_source.name}: {e}"
             )
             return False
 
@@ -1426,6 +1550,38 @@ class FeastOpenLineageEmitter:
                     outputs=[sd_output],
                     job_facets=sd_job_facets,
                     namespace=namespace,
+                )
+                results.append(result)
+
+            # ============================================================
+            # PushSources: Upstream FeatureViews → PushSource
+            # ============================================================
+            from feast.data_source import PushSource
+
+            all_push_sources: Dict[str, PushSource] = {}
+            for ds in data_sources:
+                if isinstance(ds, PushSource) and ds.name and ds.source_views:
+                    all_push_sources[ds.name] = ds
+            for fv in feature_views:
+                if (
+                    hasattr(fv, "stream_source")
+                    and isinstance(fv.stream_source, PushSource)
+                    and fv.stream_source.name
+                    and fv.stream_source.source_views
+                ):
+                    all_push_sources[fv.stream_source.name] = fv.stream_source
+                if (
+                    hasattr(fv, "batch_source")
+                    and isinstance(fv.batch_source, PushSource)
+                    and fv.batch_source.name
+                    and fv.batch_source.source_views
+                ):
+                    all_push_sources[fv.batch_source.name] = fv.batch_source
+
+            all_views = feature_views + on_demand_feature_views
+            for ps in all_push_sources.values():
+                result = self.emit_push_source_lineage(
+                    ps, all_feature_views=all_views, project=project
                 )
                 results.append(result)
 

@@ -644,3 +644,77 @@ class TestRegistryLineage:
             entity_name = f"entity_{i}"
             expected_ds = {f"data_source_{i}", "data_source_0"}
             assert entity_ds_connections[entity_name] == expected_ds
+
+    def test_push_source_upstream_lineage(self):
+        """Test Upstream FeatureViews -> PushSource -> Target FeatureView lineage."""
+        registry = Registry()
+
+        # 1. Upstream FeatureViews
+        fv1_spec = FeatureViewSpec(name="user_transaction_stats")
+        fv1 = FeatureView(spec=fv1_spec)
+
+        fv2_spec = FeatureViewSpec(name="user_credit_profile")
+        fv2 = FeatureView(spec=fv2_spec)
+
+        # 2. PushSource
+        push_ds = DataSource()
+        push_ds.name = "risk_calc_pipeline"
+        push_ds.type = DataSource.SourceType.PUSH_SOURCE
+        push_ds.push_options.upstream_feature_views.extend(
+            ["user_transaction_stats", "user_credit_profile"]
+        )
+        registry.data_sources.append(push_ds)
+
+        # 3. Downstream Target FeatureView
+        target_fv_spec = FeatureViewSpec(name="user_risk_target_fv")
+        target_fv_spec.stream_source.CopyFrom(push_ds)
+        target_fv = FeatureView(spec=target_fv_spec)
+
+        registry.feature_views.extend([fv1, fv2, target_fv])
+
+        lineage_generator = RegistryLineageGenerator()
+        direct_relationships, indirect_relationships = (
+            lineage_generator.generate_lineage(registry)
+        )
+
+        # Verify direct relationships
+        expected_direct = {
+            (
+                "featureView",
+                "user_transaction_stats",
+                "dataSource",
+                "risk_calc_pipeline",
+            ),
+            ("featureView", "user_credit_profile", "dataSource", "risk_calc_pipeline"),
+            ("dataSource", "risk_calc_pipeline", "featureView", "user_risk_target_fv"),
+        }
+
+        actual_direct = {
+            (
+                rel.source.type.value,
+                rel.source.name,
+                rel.target.type.value,
+                rel.target.name,
+            )
+            for rel in direct_relationships
+        }
+
+        for exp in expected_direct:
+            assert exp in actual_direct, (
+                f"Expected relationship {exp} not found in {actual_direct}"
+            )
+
+        # Test object relationships for push source
+        ps_relationships = lineage_generator.get_object_relationships(
+            registry, "dataSource", "risk_calc_pipeline", include_indirect=False
+        )
+        assert len(ps_relationships) == 3
+
+        # Test object lineage graph for upstream feature view traversing downstream
+        graph = lineage_generator.get_object_lineage_graph(
+            registry, "featureView", "user_transaction_stats", depth=2
+        )
+        assert "nodes" in graph
+        assert "featureView:user_transaction_stats" in graph["nodes"]
+        assert "dataSource:risk_calc_pipeline" in graph["nodes"]
+        assert "featureView:user_risk_target_fv" in graph["nodes"]

@@ -4,7 +4,9 @@ import { waitFor } from "@testing-library/react";
 import RegistryVisualization from "./RegistryVisualization";
 import { feast } from "../protos";
 import { FEAST_FCO_TYPES } from "../parsers/types";
-import { EntityRelation } from "../parsers/parseEntityRelationships";
+import parseEntityRelationships, {
+  EntityRelation,
+} from "../parsers/parseEntityRelationships";
 import { ThemeProvider } from "../contexts/ThemeContext";
 
 // ReactFlow requires ResizeObserver
@@ -368,5 +370,74 @@ describe("RegistryVisualization legend", () => {
     });
 
     expect(screen.getByText("vN")).toBeInTheDocument();
+  });
+});
+
+describe("parseEntityRelationships PushSource lineage", () => {
+  test("parses upstreamFeatureViews on PushSource into EntityRelation links", () => {
+    const registry = makeRegistry({
+      featureViews: [
+        feast.core.FeatureView.create({
+          spec: {
+            name: "user_risk_target_fv",
+            streamSource: feast.core.DataSource.create({
+              name: "risk_calc_pipeline",
+              pushOptions: feast.core.DataSource.PushOptions.create({
+                upstreamFeatureViews: [
+                  "user_transaction_stats",
+                  "user_credit_profile",
+                ],
+              }),
+            }),
+          },
+        }),
+      ],
+      dataSources: [
+        feast.core.DataSource.create({
+          name: "risk_calc_pipeline",
+          pushOptions: feast.core.DataSource.PushOptions.create({
+            upstreamFeatureViews: [
+              "user_transaction_stats",
+              "user_credit_profile",
+            ],
+          }),
+        }),
+      ],
+    });
+
+    const links = parseEntityRelationships(registry);
+
+    expect(links).toContainEqual({
+      source: {
+        type: FEAST_FCO_TYPES.featureView,
+        name: "user_transaction_stats",
+      },
+      target: {
+        type: FEAST_FCO_TYPES.dataSource,
+        name: "risk_calc_pipeline",
+      },
+    });
+
+    expect(links).toContainEqual({
+      source: {
+        type: FEAST_FCO_TYPES.featureView,
+        name: "user_credit_profile",
+      },
+      target: {
+        type: FEAST_FCO_TYPES.dataSource,
+        name: "risk_calc_pipeline",
+      },
+    });
+
+    expect(links).toContainEqual({
+      source: {
+        type: FEAST_FCO_TYPES.dataSource,
+        name: "risk_calc_pipeline",
+      },
+      target: {
+        type: FEAST_FCO_TYPES.featureView,
+        name: "user_risk_target_fv",
+      },
+    });
   });
 });

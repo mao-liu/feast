@@ -89,6 +89,11 @@ def feature_service_job_name(feature_service_name: str) -> str:
     return f"feature_service_{feature_service_name}"
 
 
+def push_source_job_name(push_source_name: str) -> str:
+    """OpenLineage job name for PushSource upstream pipeline wiring."""
+    return f"push_source_{push_source_name}"
+
+
 @dataclass(frozen=True)
 class LineageParentContext:
     """Parent OpenLineage run that a compute-engine run should link to.
