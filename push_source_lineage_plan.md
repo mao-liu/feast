@@ -279,9 +279,13 @@ user_risk_fv = FeatureView(
 
 1. **Python Unit Tests**:
    - `sdk/python/tests/unit/test_data_source.py`: Validate protobuf serialization/deserialization with `source_views` passed as both `FeatureView` objects and strings.
-   - `sdk/python/tests/unit/infra/test_registry_lineage.py`: Verify that `RegistryLineageGenerator` generates `FeatureView ➔ DataSource` relationships for `PushSource`.
+   - `sdk/python/tests/unit/infra/test_registry_lineage.py`:
+     - Verify that `RegistryLineageGenerator` generates `FeatureView ➔ DataSource` relationships for `PushSource` with `upstream_feature_views`.
+     - Regression tests: Verify that standard `FeatureView`s with stream sources (`PushSource` without `source_views`, `KafkaSource`, and `KinesisSource`) generate direct `streamSource ➔ FeatureView` and `batchSource ➔ FeatureView` edges without erroneous upstream dependency edges.
 2. **UI Unit Tests**:
-   - `ui/src/components/RegistryVisualization.test.tsx`: Test that `parseEntityRelationships` parses `upstreamFeatureViews` on data sources into valid React Flow edges.
+   - `ui/src/components/RegistryVisualization.test.tsx`:
+     - Test that `parseEntityRelationships` parses `upstreamFeatureViews` on data sources into valid React Flow edges.
+     - Regression tests: Verify `parseEntityRelationships` generates `streamSource ➔ FeatureView` and `batchSource ➔ FeatureView` links for standard `FeatureView`s with `PushSource` (no `upstreamFeatureViews`), `KafkaSource`, and `KinesisSource`.
 3. **Integration Tests**:
    - `sdk/python/tests/integration/rest_api/test_registry_rest_api.py`: Verify `/lineage/registry` and `/lineage/objects/featureView/{name}` endpoints include the new relationships.
 4. **Code Quality Checks**:
@@ -323,5 +327,5 @@ Previously, there was an inconsistency between FeatureView and StreamFeatureView
     - However, the lineage generator (both in Python registry_lineage.py and in UI parseEntityRelationships.ts) completely ignored fv.spec.streamSource.
     - Consequently, the stream/push source node was omitted, and only the batch source was connected.
 
-Now, whenever a standard FeatureView has a streamSource defined (PushSource, KafkaSource, KinesisSource, etc.), the relationship `streamSource -> FeatureView` is always drawn.
+Now, whenever a standard FeatureView has a streamSource defined (PushSource, KafkaSource, KinesisSource, etc.), the relationship `streamSource -> FeatureView` is always drawn. Specific unit tests in both Python (`test_registry_lineage.py`) and UI (`RegistryVisualization.test.tsx`) assert this behavior across PushSource, KafkaSource, and KinesisSource.
 
