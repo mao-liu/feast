@@ -477,7 +477,11 @@ class RegistryLineageGenerator:
                     )
 
         # Upstream FeatureView -> DataSource (PushSource) relationships
-        all_data_sources = list(registry.data_sources)
+        # Candidate PushSources can be registered standalone or embedded in views:
+        # - FeatureView.spec.stream_source / StreamFeatureView.spec.stream_source
+        # - LabelView.spec.source
+        # Note: batch_source is never a PushSource, so only stream_source and LabelView.source are inspected.
+        candidate_push_sources = list(registry.data_sources)
         for fv in registry.feature_views:
             if hasattr(fv, "spec") and fv.spec:
                 if (
@@ -485,13 +489,7 @@ class RegistryLineageGenerator:
                     and fv.spec.stream_source
                     and fv.spec.stream_source.name
                 ):
-                    all_data_sources.append(fv.spec.stream_source)
-                if (
-                    hasattr(fv.spec, "batch_source")
-                    and fv.spec.batch_source
-                    and fv.spec.batch_source.name
-                ):
-                    all_data_sources.append(fv.spec.batch_source)
+                    candidate_push_sources.append(fv.spec.stream_source)
         for sfv in registry.stream_feature_views:
             if hasattr(sfv, "spec") and sfv.spec:
                 if (
@@ -499,13 +497,7 @@ class RegistryLineageGenerator:
                     and sfv.spec.stream_source
                     and sfv.spec.stream_source.name
                 ):
-                    all_data_sources.append(sfv.spec.stream_source)
-                if (
-                    hasattr(sfv.spec, "batch_source")
-                    and sfv.spec.batch_source
-                    and sfv.spec.batch_source.name
-                ):
-                    all_data_sources.append(sfv.spec.batch_source)
+                    candidate_push_sources.append(sfv.spec.stream_source)
         for lv in registry.label_views:
             if hasattr(lv, "spec") and lv.spec:
                 if (
@@ -513,16 +505,10 @@ class RegistryLineageGenerator:
                     and lv.spec.source
                     and lv.spec.source.name
                 ):
-                    all_data_sources.append(lv.spec.source)
-                if (
-                    hasattr(lv.spec, "batch_source")
-                    and lv.spec.batch_source
-                    and lv.spec.batch_source.name
-                ):
-                    all_data_sources.append(lv.spec.batch_source)
+                    candidate_push_sources.append(lv.spec.source)
 
         seen_push_edges: Set[Tuple[str, str]] = set()
-        for ds in all_data_sources:
+        for ds in candidate_push_sources:
             if not (hasattr(ds, "name") and ds.name):
                 continue
             if (

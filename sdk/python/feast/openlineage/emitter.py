@@ -276,6 +276,9 @@ class FeastOpenLineageEmitter:
         try:
             from feast.data_source import PushSource
 
+            # Candidate PushSources can come from registered data sources or be embedded
+            # in feature views as stream_source (FeatureView) or source (LabelView).
+            # Note: batch_source is never a PushSource, so it is not inspected here.
             all_push_sources: Dict[str, PushSource] = {}
             for ds in registered_data_sources:
                 if isinstance(ds, PushSource) and ds.name and ds.source_views:
@@ -288,13 +291,6 @@ class FeastOpenLineageEmitter:
                     and fv.stream_source.source_views
                 ):
                     all_push_sources[fv.stream_source.name] = fv.stream_source
-                if (
-                    hasattr(fv, "batch_source")
-                    and isinstance(fv.batch_source, PushSource)
-                    and fv.batch_source.name
-                    and fv.batch_source.source_views
-                ):
-                    all_push_sources[fv.batch_source.name] = fv.batch_source
                 if (
                     hasattr(fv, "source")
                     and isinstance(fv.source, PushSource)
@@ -1555,6 +1551,9 @@ class FeastOpenLineageEmitter:
 
             # ============================================================
             # PushSources: Upstream FeatureViews → PushSource
+            # Candidate PushSources can come from registered data sources or be embedded
+            # in feature views as stream_source (FeatureView) or source (LabelView).
+            # Note: batch_source is never a PushSource, so it is not inspected here.
             # ============================================================
             from feast.data_source import PushSource
 
@@ -1571,12 +1570,12 @@ class FeastOpenLineageEmitter:
                 ):
                     all_push_sources[fv.stream_source.name] = fv.stream_source
                 if (
-                    hasattr(fv, "batch_source")
-                    and isinstance(fv.batch_source, PushSource)
-                    and fv.batch_source.name
-                    and fv.batch_source.source_views
+                    hasattr(fv, "source")
+                    and isinstance(fv.source, PushSource)
+                    and fv.source.name
+                    and fv.source.source_views
                 ):
-                    all_push_sources[fv.batch_source.name] = fv.batch_source
+                    all_push_sources[fv.source.name] = fv.source
 
             all_views = feature_views + on_demand_feature_views
             for ps in all_push_sources.values():

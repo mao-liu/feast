@@ -276,8 +276,25 @@ const parseEntityRelationships = (objects: feast.core.Registry) => {
   const dsLocationIndex = buildDataSourceLocationIndex(allDataSources);
 
   // Upstream FeatureView -> DataSource (PushSource) relationships
+  // Candidate PushSources can be registered standalone or embedded in views:
+  // - FeatureView.spec.streamSource / StreamFeatureView.spec.streamSource
+  // - LabelView.spec.source
+  // Note: BatchSource and non-push StreamSource do not declare upstreamFeatureViews.
+  const candidatePushSources = [
+    ...((objects as any).dataSources || []),
+    ...(objects.featureViews || [])
+      .map((fv: any) => fv.spec?.streamSource)
+      .filter(Boolean),
+    ...(objects.streamFeatureViews || [])
+      .map((sfv: any) => sfv.spec?.streamSource)
+      .filter(Boolean),
+    ...(((objects as any).labelViews || []) as any[])
+      .map((lv: any) => lv.spec?.source)
+      .filter(Boolean),
+  ];
+
   const seenPushEdges = new Set<string>();
-  allDataSources.forEach((ds: any) => {
+  candidatePushSources.forEach((ds: any) => {
     const dsObj = ds.spec || ds;
     const dsName = dsObj.name;
     const pushOpts = dsObj.pushOptions || dsObj.push_options;

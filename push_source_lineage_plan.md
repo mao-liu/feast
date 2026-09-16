@@ -10,6 +10,11 @@ Currently, Feast only models:
 This plan adds support for modeling and visualizing the full end-to-end dependency chain in Feast's lineage graphs:
 $$\text{Upstream FeatureViews} \longrightarrow \text{PushSource (External Pipeline)} \longrightarrow \text{Target FeatureView}$$
 
+### Scope Boundaries:
+- **`PushSource` only**: Upstream feature view lineage (`source_views` / `upstream_feature_views`) is strictly limited to `PushSource`.
+- **`BatchSource` and non-push `StreamSource`**: These data sources do not declare or require upstream feature view lineage.
+- **Embedded `PushSource` discovery**: When a `PushSource` is used as the source for a `FeatureView`, Feast stores it internally in `stream_source` (and `lv.spec.source` for `LabelView`). Therefore, lineage discovery inspects `registry.data_sources`, `fv.spec.stream_source`, `sfv.spec.stream_source`, and `lv.spec.source`. `batch_source` is never a `PushSource` and is excluded from push candidate discovery.
+
 ---
 
 ## 2. Target Lineage Graph
@@ -111,27 +116,53 @@ make protos
 ### C. Static Registry Lineage Engine
 **File**: `sdk/python/feast/lineage/registry_lineage.py`
 
-In `RegistryLineageGenerator._parse_direct_relationships()`, extract upstream dependencies for `PushSource`s:
+In `RegistryLineageGenerator._parse_direct_relationships()`, extract upstream dependencies exclusively for `PushSource`s.
+Candidate `PushSource`s are discovered from:
+1. `registry.data_sources` (standalone registered PushSources)
+2. `feature_view.spec.stream_source` / `stream_feature_view.spec.stream_source` (embedded PushSources)
+3. `label_view.spec.source` (embedded PushSources in LabelViews)
+
+*Note: `batch_source` is never a `PushSource` and does not declare `upstream_feature_views`.*
 
 ```python
 # Upstream FeatureView -> DataSource (PushSource) relationships
-for data_source in registry.data_sources:
+candidate_push_sources = list(registry.data_sources)
+for fv in registry.feature_views:
+    if hasattr(fv, "spec") and fv.spec and fv.spec.stream_source and fv.spec.stream_source.name:
+        candidate_push_sources.append(fv.spec.stream_source)
+for sfv in registry.stream_feature_views:
+    if hasattr(sfv, "spec") and sfv.spec and sfv.spec.stream_source and sfv.spec.stream_source.name:
+        candidate_push_sources.append(sfv.spec.stream_source)
+for lv in registry.label_views:
+    if hasattr(lv, "spec") and lv.spec and lv.spec.source and lv.spec.source.name:
+        candidate_push_sources.append(lv.spec.source)
+
+seen_push_edges: Set[Tuple[str, str]] = set()
+for ds in candidate_push_sources:
+    if not (hasattr(ds, "name") and ds.name):
+        continue
     if (
-        hasattr(data_source, "push_options")
-        and data_source.push_options
-        and hasattr(data_source.push_options, "upstream_feature_views")
+        hasattr(ds, "push_options")
+        and ds.push_options
+        and hasattr(ds.push_options, "upstream_feature_views")
     ):
-        for upstream_fv in data_source.push_options.upstream_feature_views:
-            relationships.append(
-                EntityRelation(
-                    source=EntityReference(
-                        FeastObjectType.FEATURE_VIEW, upstream_fv
-                    ),
-                    target=EntityReference(
-                        FeastObjectType.DATA_SOURCE, data_source.name
-                    ),
+        for upstream_fv in ds.push_options.upstream_feature_views:
+            edge_key = (upstream_fv, ds.name)
+            if edge_key not in seen_push_edges:
+                seen_push_edges.add(edge_key)
+                source_type = (
+                    FeastObjectType.LABEL_VIEW
+                    if upstream_fv in label_view_names
+                    else FeastObjectType.FEATURE_VIEW
                 )
-            )
+                relationships.append(
+                    EntityRelation(
+                        source=EntityReference(source_type, upstream_fv),
+                        target=EntityReference(
+                            FeastObjectType.DATA_SOURCE, ds.name
+                        ),
+                    )
+                )
 ```
 
 ---
@@ -139,25 +170,52 @@ for data_source in registry.data_sources:
 ### D. UI Relationship Parser
 **File**: `ui/src/parsers/parseEntityRelationships.ts`
 
-In `parseEntityRelationships()`, extract upstream edges for data sources:
+In `parseEntityRelationships()`, extract upstream edges exclusively for `PushSource`s from `dataSources`, `fv.spec.streamSource`, `sfv.spec.streamSource`, and `lv.spec.source`:
 
 ```typescript
-objects.dataSources?.forEach((ds) => {
-  if (ds.pushOptions?.upstreamFeatureViews) {
-    ds.pushOptions.upstreamFeatureViews.forEach((upstreamFvName: string) => {
-      links.push({
-        source: {
-          type: FEAST_FCO_TYPES["featureView"],
-          name: upstreamFvName,
-        },
-        target: {
-          type: FEAST_FCO_TYPES["dataSource"],
-          name: ds.name || "",
-        },
-      });
+const candidatePushSources = [
+  ...((objects as any).dataSources || []),
+  ...(objects.featureViews || [])
+    .map((fv: any) => fv.spec?.streamSource)
+    .filter(Boolean),
+  ...(objects.streamFeatureViews || [])
+    .map((sfv: any) => sfv.spec?.streamSource)
+    .filter(Boolean),
+  ...(((objects as any).labelViews || []) as any[])
+    .map((lv: any) => lv.spec?.source)
+    .filter(Boolean),
+];
+
+const seenPushEdges = new Set<string>();
+candidatePushSources.forEach((ds: any) => {
+  const dsObj = ds.spec || ds;
+  const dsName = dsObj.name;
+  const pushOpts = dsObj.pushOptions || dsObj.push_options;
+  const upstreamFvs =
+    pushOpts?.upstreamFeatureViews || pushOpts?.upstream_feature_views;
+  if (dsName && Array.isArray(upstreamFvs)) {
+    upstreamFvs.forEach((upstreamFvName: string) => {
+      const edgeKey = `${upstreamFvName}->${dsName}`;
+      if (!seenPushEdges.has(edgeKey)) {
+        seenPushEdges.add(edgeKey);
+        const isLabelView = labelViewNames.has(upstreamFvName);
+        links.push({
+          source: {
+            type: isLabelView
+              ? FEAST_FCO_TYPES["labelView"]
+              : FEAST_FCO_TYPES["featureView"],
+            name: upstreamFvName,
+          },
+          target: {
+            type: FEAST_FCO_TYPES["dataSource"],
+            name: dsName,
+          },
+        });
+      }
     });
   }
 });
+```
 ```
 
 ---
