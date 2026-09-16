@@ -70,7 +70,10 @@ def test_emit_push_source_lineage():
 
     result = emitter.emit_push_source_lineage(
         push_source=push_source,
-        all_feature_views=[user_tx_fv, user_credit_fv],
+        all_feature_views_by_name={
+            "user_transaction_stats": user_tx_fv,
+            "user_credit_profile": user_credit_fv,
+        },
         project="test_project",
     )
 
@@ -85,8 +88,45 @@ def test_emit_push_source_lineage():
     assert "user_transaction_stats" in input_names
     assert "user_credit_profile" in input_names
 
+    # Check schema facets populated
+    for inp in call_kwargs["inputs"]:
+        assert "schema" in inp.facets
+        assert len(inp.facets["schema"].fields) == 1
+
     output_names = [out.name for out in call_kwargs["outputs"]]
     assert "risk_calc_pipeline" in output_names
+
+
+def test_emit_push_source_lineage_without_feature_views():
+    """Test emit_push_source_lineage when no feature views are provided."""
+    mock_client = MagicMock()
+    mock_client.is_enabled = True
+    mock_client.emit_run_event.return_value = True
+
+    config = OpenLineageConfig(enabled=True)
+    emitter = FeastOpenLineageEmitter(config=config, client=mock_client)
+
+    file_source = FileSource(path="data/transactions.parquet")
+    push_source = PushSource(
+        name="risk_calc_pipeline",
+        batch_source=file_source,
+        source_views=["upstream_fv_1", "upstream_fv_2"],
+        description="Streaming pipeline computing risk",
+    )
+
+    result = emitter.emit_push_source_lineage(
+        push_source=push_source,
+        project="test_project",
+    )
+
+    assert result is True
+    assert mock_client.emit_run_event.called
+
+    call_kwargs = mock_client.emit_run_event.call_args.kwargs
+    input_names = [inp.name for inp in call_kwargs["inputs"]]
+    assert input_names == ["upstream_fv_1", "upstream_fv_2"]
+    for inp in call_kwargs["inputs"]:
+        assert inp.facets == {}
 
 
 def test_emit_apply_with_push_source():

@@ -299,9 +299,16 @@ class FeastOpenLineageEmitter:
                 ):
                     all_push_sources[fv.source.name] = fv.source
 
+            all_feature_views_by_name = {
+                fv.name: fv
+                for fv in all_feature_views
+                if hasattr(fv, "name") and fv.name
+            }
             for ps in all_push_sources.values():
                 result = self.emit_push_source_lineage(
-                    ps, all_feature_views=all_feature_views, project=project
+                    ps,
+                    all_feature_views_by_name=all_feature_views_by_name,
+                    project=project,
                 )
                 results.append(result)
         except Exception as e:
@@ -544,11 +551,10 @@ class FeastOpenLineageEmitter:
     def emit_push_source_lineage(
         self,
         push_source: "PushSource",
-        all_feature_views: Optional[List[Any]] = None,
+        all_feature_views_by_name: Optional[Dict[str, Any]] = None,
         project: str = "",
     ) -> bool:
-        """
-        Emit OpenLineage job definition event for a PushSource with upstream feature views.
+        """Emit OpenLineage job definition event for a PushSource with upstream feature views.
 
         Job: push_source_{push_source.name}
         Inputs: Upstream FeatureViews (push_source.source_views)
@@ -556,7 +562,7 @@ class FeastOpenLineageEmitter:
 
         Args:
             push_source: PushSource object
-            all_feature_views: List of all available feature views for schema metadata
+            all_feature_views_by_name: Dictionary mapping feature view names to feature views (or list of feature views) for schema metadata
             project: Project name
 
         Returns:
@@ -577,20 +583,15 @@ class FeastOpenLineageEmitter:
 
             namespace = self._get_namespace(project)
 
+            views_dict: Dict[str, Any] = all_feature_views_by_name or {}
             ps_inputs = []
             for sv_name in push_source.source_views:
                 input_facets: Dict[str, Any] = {}
-                if all_feature_views:
-                    for fv in all_feature_views:
-                        if getattr(fv, "name", None) == sv_name and getattr(
-                            fv, "features", None
-                        ):
-                            input_facets["schema"] = schema_dataset.SchemaDatasetFacet(
-                                fields=[
-                                    feast_field_to_schema_field(f) for f in fv.features
-                                ]
-                            )
-                            break
+                fv = views_dict.get(sv_name)
+                if fv and getattr(fv, "features", None):
+                    input_facets["schema"] = schema_dataset.SchemaDatasetFacet(
+                        fields=[feast_field_to_schema_field(f) for f in fv.features]
+                    )
                 ps_inputs.append(
                     InputDataset(
                         namespace=namespace,
@@ -1578,9 +1579,12 @@ class FeastOpenLineageEmitter:
                     all_push_sources[fv.source.name] = fv.source
 
             all_views = feature_views + on_demand_feature_views
+            all_views_by_name = {
+                fv.name: fv for fv in all_views if hasattr(fv, "name") and fv.name
+            }
             for ps in all_push_sources.values():
                 result = self.emit_push_source_lineage(
-                    ps, all_feature_views=all_views, project=project
+                    ps, all_feature_views_by_name=all_views_by_name, project=project
                 )
                 results.append(result)
 
