@@ -228,7 +228,7 @@ class RegistryLineageGenerator:
                         )
                         relationships.append(rel)
 
-                # Stream source relationship
+                # Stream source -> FeatureView relationships
                 if (
                     hasattr(feature_view.spec, "stream_source")
                     and feature_view.spec.stream_source
@@ -477,62 +477,66 @@ class RegistryLineageGenerator:
                     )
 
         # Upstream FeatureView -> DataSource (PushSource) relationships
-        # Candidate PushSources can be registered standalone or embedded in views:
-        # - FeatureView.spec.stream_source / StreamFeatureView.spec.stream_source
-        # - LabelView.spec.source
-        # Note: batch_source is never a PushSource, so only stream_source and LabelView.source are inspected.
-        candidate_push_sources = list(registry.data_sources)
+        push_sources = list(registry.data_sources)
         for fv in registry.feature_views:
-            if hasattr(fv, "spec") and fv.spec:
-                if (
-                    hasattr(fv.spec, "stream_source")
-                    and fv.spec.stream_source
-                    and fv.spec.stream_source.name
-                ):
-                    candidate_push_sources.append(fv.spec.stream_source)
+            if (
+                hasattr(fv, "spec")
+                and fv.spec
+                and hasattr(fv.spec, "stream_source")
+                and fv.spec.stream_source
+                and hasattr(fv.spec.stream_source, "push_options")
+                and fv.spec.stream_source.push_options
+            ):
+                push_sources.append(fv.spec.stream_source)
         for sfv in registry.stream_feature_views:
-            if hasattr(sfv, "spec") and sfv.spec:
-                if (
-                    hasattr(sfv.spec, "stream_source")
-                    and sfv.spec.stream_source
-                    and sfv.spec.stream_source.name
-                ):
-                    candidate_push_sources.append(sfv.spec.stream_source)
+            if (
+                hasattr(sfv, "spec")
+                and sfv.spec
+                and hasattr(sfv.spec, "stream_source")
+                and sfv.spec.stream_source
+                and hasattr(sfv.spec.stream_source, "push_options")
+                and sfv.spec.stream_source.push_options
+            ):
+                push_sources.append(sfv.spec.stream_source)
         for lv in registry.label_views:
-            if hasattr(lv, "spec") and lv.spec:
-                if (
-                    hasattr(lv.spec, "source")
-                    and lv.spec.source
-                    and lv.spec.source.name
-                ):
-                    candidate_push_sources.append(lv.spec.source)
+            if (
+                hasattr(lv, "spec")
+                and lv.spec
+                and hasattr(lv.spec, "source")
+                and lv.spec.source
+                and hasattr(lv.spec.source, "push_options")
+                and lv.spec.source.push_options
+            ):
+                push_sources.append(lv.spec.source)
 
         seen_push_edges: Set[Tuple[str, str]] = set()
-        for ds in candidate_push_sources:
-            if not (hasattr(ds, "name") and ds.name):
-                continue
+        for ds in push_sources:
             if (
-                hasattr(ds, "push_options")
-                and ds.push_options
-                and hasattr(ds.push_options, "upstream_feature_views")
+                not hasattr(ds, "name")
+                or not ds.name
+                or not hasattr(ds, "push_options")
+                or not hasattr(ds.push_options, "upstream_feature_views")
+                or not ds.push_options.upstream_feature_views
             ):
-                for upstream_fv in ds.push_options.upstream_feature_views:
-                    edge_key = (upstream_fv, ds.name)
-                    if edge_key not in seen_push_edges:
-                        seen_push_edges.add(edge_key)
-                        source_type = (
-                            FeastObjectType.LABEL_VIEW
-                            if upstream_fv in label_view_names
-                            else FeastObjectType.FEATURE_VIEW
-                        )
-                        relationships.append(
-                            EntityRelation(
-                                source=EntityReference(source_type, upstream_fv),
-                                target=EntityReference(
-                                    FeastObjectType.DATA_SOURCE, ds.name
-                                ),
-                            )
-                        )
+                continue
+            for upstream_fv in ds.push_options.upstream_feature_views:
+                edge_key = (upstream_fv, ds.name)
+                if edge_key in seen_push_edges:
+                    continue
+                seen_push_edges.add(edge_key)
+                source_type = (
+                    FeastObjectType.LABEL_VIEW
+                    if upstream_fv in label_view_names
+                    else FeastObjectType.FEATURE_VIEW
+                )
+                relationships.append(
+                    EntityRelation(
+                        source=EntityReference(source_type, upstream_fv),
+                        target=EntityReference(
+                            FeastObjectType.DATA_SOURCE, ds.name
+                        ),
+                    )
+                )
 
         # SavedDataset relationships
         ds_location_index = _build_datasource_location_index(registry)

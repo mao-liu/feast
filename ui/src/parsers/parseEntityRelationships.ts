@@ -256,7 +256,6 @@ const parseEntityRelationships = (objects: feast.core.Registry) => {
     }
   });
 
-  // Build data source location index for storage-based matching
   const allDataSources = [
     ...((objects as any).dataSources || []),
     ...(objects.featureViews || [])
@@ -266,35 +265,18 @@ const parseEntityRelationships = (objects: feast.core.Registry) => {
       .flatMap((sfv: any) => [sfv.spec?.batchSource, sfv.spec?.streamSource])
       .filter(Boolean),
     ...(((objects as any).labelViews || []) as any[])
-      .flatMap((lv: any) => [
-        lv.spec?.source,
-        lv.spec?.batchSource,
-        lv.spec?.source?.batchSource,
-      ])
+      .flatMap((lv: any) => [lv.spec?.source, lv.spec?.batchSource])
       .filter(Boolean),
   ];
+
+  // Build data source location index for storage-based matching
+  // stream sources that don't specify any storage locations are safely skipped
   const dsLocationIndex = buildDataSourceLocationIndex(allDataSources);
 
   // Upstream FeatureView -> DataSource (PushSource) relationships
-  // Candidate PushSources can be registered standalone or embedded in views:
-  // - FeatureView.spec.streamSource / StreamFeatureView.spec.streamSource
-  // - LabelView.spec.source
   // Note: BatchSource and non-push StreamSource do not declare upstreamFeatureViews.
-  const candidatePushSources = [
-    ...((objects as any).dataSources || []),
-    ...(objects.featureViews || [])
-      .map((fv: any) => fv.spec?.streamSource)
-      .filter(Boolean),
-    ...(objects.streamFeatureViews || [])
-      .map((sfv: any) => sfv.spec?.streamSource)
-      .filter(Boolean),
-    ...(((objects as any).labelViews || []) as any[])
-      .map((lv: any) => lv.spec?.source)
-      .filter(Boolean),
-  ];
-
   const seenPushEdges = new Set<string>();
-  candidatePushSources.forEach((ds: any) => {
+  allDataSources.forEach((ds: any) => {
     const dsObj = ds.spec || ds;
     const dsName = dsObj.name;
     const pushOpts = dsObj.pushOptions || dsObj.push_options;

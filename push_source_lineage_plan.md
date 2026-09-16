@@ -126,43 +126,48 @@ Candidate `PushSource`s are discovered from:
 
 ```python
 # Upstream FeatureView -> DataSource (PushSource) relationships
-candidate_push_sources = list(registry.data_sources)
+candidate_sources = list(registry.data_sources)
 for fv in registry.feature_views:
-    if hasattr(fv, "spec") and fv.spec and fv.spec.stream_source and fv.spec.stream_source.name:
-        candidate_push_sources.append(fv.spec.stream_source)
+    if hasattr(fv, "spec") and fv.spec and hasattr(fv.spec, "stream_source") and fv.spec.stream_source:
+        candidate_sources.append(fv.spec.stream_source)
 for sfv in registry.stream_feature_views:
-    if hasattr(sfv, "spec") and sfv.spec and sfv.spec.stream_source and sfv.spec.stream_source.name:
-        candidate_push_sources.append(sfv.spec.stream_source)
+    if hasattr(sfv, "spec") and sfv.spec and hasattr(sfv.spec, "stream_source") and sfv.spec.stream_source:
+        candidate_sources.append(sfv.spec.stream_source)
 for lv in registry.label_views:
-    if hasattr(lv, "spec") and lv.spec and lv.spec.source and lv.spec.source.name:
-        candidate_push_sources.append(lv.spec.source)
+    if hasattr(lv, "spec") and lv.spec and hasattr(lv.spec, "source") and lv.spec.source:
+        candidate_sources.append(lv.spec.source)
 
-seen_push_edges: Set[Tuple[str, str]] = set()
-for ds in candidate_push_sources:
-    if not (hasattr(ds, "name") and ds.name):
-        continue
+push_sources = [
+    ds
+    for ds in candidate_sources
     if (
-        hasattr(ds, "push_options")
+        hasattr(ds, "name")
+        and ds.name
+        and hasattr(ds, "push_options")
         and ds.push_options
         and hasattr(ds.push_options, "upstream_feature_views")
-    ):
-        for upstream_fv in ds.push_options.upstream_feature_views:
-            edge_key = (upstream_fv, ds.name)
-            if edge_key not in seen_push_edges:
-                seen_push_edges.add(edge_key)
-                source_type = (
-                    FeastObjectType.LABEL_VIEW
-                    if upstream_fv in label_view_names
-                    else FeastObjectType.FEATURE_VIEW
+    )
+]
+
+seen_push_edges: Set[Tuple[str, str]] = set()
+for ds in push_sources:
+    for upstream_fv in ds.push_options.upstream_feature_views:
+        edge_key = (upstream_fv, ds.name)
+        if edge_key not in seen_push_edges:
+            seen_push_edges.add(edge_key)
+            source_type = (
+                FeastObjectType.LABEL_VIEW
+                if upstream_fv in label_view_names
+                else FeastObjectType.FEATURE_VIEW
+            )
+            relationships.append(
+                EntityRelation(
+                    source=EntityReference(source_type, upstream_fv),
+                    target=EntityReference(
+                        FeastObjectType.DATA_SOURCE, ds.name
+                    ),
                 )
-                relationships.append(
-                    EntityRelation(
-                        source=EntityReference(source_type, upstream_fv),
-                        target=EntityReference(
-                            FeastObjectType.DATA_SOURCE, ds.name
-                        ),
-                    )
-                )
+            )
 ```
 
 ---
@@ -304,3 +309,19 @@ uv run \
 ```
 
 A prior commit on master (28bde0128 which introduced ConnectionRef) updated DataSource.proto but did not commit the generated DataSource_pb2.py / .pyi bindings. Compiling DataSource.proto now brought in both upstream_feature_views and ConnectionRef.
+
+
+### `parseEntityRelationships.ts` & `registry_lineage.py`
+
+Previously, there was an inconsistency between FeatureView and StreamFeatureView:
+
+- StreamFeatureView: Always drew edges for both its streamSource and its batchSource:
+    - streamSource -> StreamFeatureView
+    - batchSource -> StreamFeatureView
+- Standard FeatureView: Only inspected fv.spec.batchSource:
+    - If a standard FeatureView used a PushSource, KafkaSource, or KinesisSource, Feast populated both stream_source and batch_source under the hood.
+    - However, the lineage generator (both in Python registry_lineage.py and in UI parseEntityRelationships.ts) completely ignored fv.spec.streamSource.
+    - Consequently, the stream/push source node was omitted, and only the batch source was connected.
+
+Now, whenever a standard FeatureView has a streamSource defined (PushSource, KafkaSource, KinesisSource, etc.), the relationship `streamSource -> FeatureView` is always drawn.
+
