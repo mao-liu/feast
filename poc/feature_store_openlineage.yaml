@@ -1,0 +1,19 @@
+project: push_source_poc
+registry: data/registry.db
+provider: local
+offline_store:
+  type: file
+online_store:
+  type: sqlite
+  path: data/online_store.db
+entity_key_serialization_version: 3
+openlineage:
+  enabled: true
+  transport_type: console
+  namespace: push_source_poc
+  producer: feast
+  emit_on_apply: true
+  consumer:
+    enabled: true
+    store_type: sql
+    connection_string: sqlite:///data/openlineage.db
