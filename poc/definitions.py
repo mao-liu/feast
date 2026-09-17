@@ -66,12 +66,12 @@ risk_calc_batch_source = FileSource(
     created_timestamp_column="created",
 )
 
-user_stream_batch_source = FileSource(
-    name="user_stream_batch_source",
-    path="data/stream_push.parquet",
-    timestamp_field="event_timestamp",
-    created_timestamp_column="created",
-)
+# user_stream_batch_source = FileSource(
+#     name="user_stream_batch_source",
+#     path="data/stream_push.parquet",
+#     timestamp_field="event_timestamp",
+#     created_timestamp_column="created",
+# )
 
 # kafka_batch_source = FileSource(
 #     name="kafka_batch_source",
@@ -126,12 +126,12 @@ raw_push_source = PushSource(
     description="Direct push source without upstream views",
 )
 
-# PushSource feeding a StreamFeatureView
-stream_push_source = PushSource(
-    name="stream_push_source",
-    batch_source=user_stream_batch_source,
-    description="Push source feeding StreamFeatureView",
-)
+# # PushSource feeding a StreamFeatureView
+# stream_push_source = PushSource(
+#     name="stream_push_source",
+#     batch_source=user_stream_batch_source,
+#     description="Push source feeding StreamFeatureView",
+# )
 
 # # Kafka streaming source
 # kafka_clickstream_source = KafkaSource(

@@ -9,7 +9,9 @@ online_store:
 entity_key_serialization_version: 3
 openlineage:
   enabled: true
-  transport_type: console
+  transport_type: http
+  transport_url: http://localhost:6580
+  transport_endpoint: api/v1/lineage
   namespace: push_source_poc
   producer: feast
   emit_on_apply: true
